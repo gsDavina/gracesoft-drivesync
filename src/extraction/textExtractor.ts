@@ -1,73 +1,42 @@
-import { PDFParse } from "pdf-parse";
 import type { DriveClient, DriveFileMeta } from "../drive/driveClient.js";
+import { createGoogleDocsSlidesExtractor, createGoogleSheetsCsvExtractor } from "./extractors/googleNative.js";
+import { createPdfExtractor } from "./extractors/pdf.js";
+import type { PdfParser } from "./extractors/pdf.js";
+import { createExtractorRegistry } from "./registry.js";
+import type { ExtractionResult, Extractor } from "./types.js";
 
-const GOOGLE_DOC_MIME = "application/vnd.google-apps.document";
-const GOOGLE_SHEET_MIME = "application/vnd.google-apps.spreadsheet";
-const GOOGLE_SLIDES_MIME = "application/vnd.google-apps.presentation";
-const PDF_MIME = "application/pdf";
-
-export type ExtractionResult =
-  | { ok: true; text: string }
-  | { ok: false; reason: "unsupported-mime-type" | "scanned-pdf-ocr-not-implemented" };
-
-export interface PdfParser {
-  parse(buffer: Buffer): Promise<{ text: string }>;
-}
+export type { ExtractionFailureReason, ExtractionResult, Extractor } from "./types.js";
+export type { PdfParser } from "./extractors/pdf.js";
+export { createPdfParser } from "./extractors/pdf.js";
 
 export interface TextExtractor {
   extractText(file: DriveFileMeta): Promise<ExtractionResult>;
 }
 
-export function createTextExtractor(deps: { driveClient: DriveClient; pdfParser: PdfParser }): TextExtractor {
-  return {
-    async extractText(file: DriveFileMeta): Promise<ExtractionResult> {
-      switch (file.mimeType) {
-        case GOOGLE_DOC_MIME:
-        case GOOGLE_SLIDES_MIME: {
-          const text = await deps.driveClient.exportAsText(file.id, "text/plain");
-          return { ok: true, text };
-        }
-
-        // Drive's CSV export only captures the first sheet of a multi-sheet
-        // spreadsheet — a known limitation carried forward from v1. Not
-        // solved here; see M5 progress doc.
-        case GOOGLE_SHEET_MIME: {
-          const text = await deps.driveClient.exportAsText(file.id, "text/csv");
-          return { ok: true, text };
-        }
-
-        case PDF_MIME: {
-          const buffer = await deps.driveClient.downloadFile(file.id);
-          const { text } = await deps.pdfParser.parse(buffer);
-          const trimmed = text.trim();
-          if (!trimmed) {
-            // A PDF with no extractable text layer is (almost always) a
-            // scanned image. OCR is an explicit fast-follow, not v2-launch
-            // scope — fail closed with a specific reason instead of
-            // silently returning empty text that downstream stages would
-            // mistake for "this file has no content."
-            return { ok: false, reason: "scanned-pdf-ocr-not-implemented" };
-          }
-          return { ok: true, text: trimmed };
-        }
-
-        default:
-          return { ok: false, reason: "unsupported-mime-type" };
-      }
-    },
-  };
+export interface TextExtractorDeps {
+  driveClient: DriveClient;
+  pdfParser: PdfParser;
 }
 
-export function createPdfParser(): PdfParser {
+/** The production extractor set, in registration order. */
+export function defaultExtractors(deps: TextExtractorDeps): Extractor[] {
+  return [createGoogleDocsSlidesExtractor(), createGoogleSheetsCsvExtractor(), createPdfExtractor(deps.pdfParser)];
+}
+
+/**
+ * A thin dispatcher: look the file's MIME type up in the extractor registry
+ * and hand it over, or fail closed as `unsupported-mime-type` (without ever
+ * downloading the file) when nothing claims it.
+ */
+export function createTextExtractor(deps: TextExtractorDeps): TextExtractor {
+  const registry = createExtractorRegistry(defaultExtractors(deps));
+  const ctx = { driveClient: deps.driveClient };
+
   return {
-    async parse(buffer: Buffer): Promise<{ text: string }> {
-      const parser = new PDFParse({ data: buffer });
-      try {
-        const result = await parser.getText();
-        return { text: result.text };
-      } finally {
-        await parser.destroy();
-      }
+    async extractText(file) {
+      const extractor = registry.lookup(file.mimeType);
+      if (!extractor) return { ok: false, reason: "unsupported-mime-type" };
+      return extractor.extract(file, ctx);
     },
   };
 }

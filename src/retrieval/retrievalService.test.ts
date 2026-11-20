@@ -31,6 +31,17 @@ describe("createRetrievalService", () => {
     ]);
   });
 
+  it("returns the file's path within the connected folder when the chunk has one", async () => {
+    const vectorStore = makeVectorStore([
+      { id: "f-0", score: 0.8, metadata: { text: "t", fileId: "f", name: "deep.txt", path: "Reports/deep.txt" } },
+    ]);
+    const service = createRetrievalService({ embeddingProvider: makeEmbeddingProvider(), vectorStore });
+
+    const [result] = await service.query("acct_1", "q", 1);
+
+    expect(result?.filePath).toBe("Reports/deep.txt");
+  });
+
   it("queries only the caller's own namespace (accountId)", async () => {
     const vectorStore = makeVectorStore([]);
     const service = createRetrievalService({ embeddingProvider: makeEmbeddingProvider([1, 2, 3]), vectorStore });

@@ -13,14 +13,62 @@ export interface DriveFileMeta {
   mimeType: string;
   /** ISO 8601, as returned by the Drive API. */
   modifiedTime: string;
+  /**
+   * Slash-separated location relative to the connected folder, ending in the
+   * file name (`"a.pdf"` at the top level, `"Reports/2026/b.pdf"` nested).
+   * Informational only — vectors stay flat, keyed by `fileId`.
+   */
+  path?: string;
+}
+
+/** One raw child of a Drive folder, before folders are split from files. */
+export type DriveChildEntry = Omit<DriveFileMeta, "path">;
+
+/**
+ * Walks the connected folder and every folder beneath it (breadth-first),
+ * returning one flat list of the files found anywhere in the tree.
+ *
+ * - Each folder is visited at most once, so a folder reachable by more than
+ *   one route (Drive allows multiple parents) can't loop or double-list.
+ * - A file reachable by more than one route is listed once (first path
+ *   wins): vector IDs are keyed by `fileId`, so a duplicate would just
+ *   re-embed the same content twice in one run.
+ * - Shortcuts aren't folders by mimeType, so they're never followed.
+ */
+export async function walkFolderTree(
+  rootFolderId: string,
+  listChildren: (folderId: string) => Promise<DriveChildEntry[]>,
+): Promise<DriveFileMeta[]> {
+  const files: DriveFileMeta[] = [];
+  const seenFileIds = new Set<string>();
+  const visitedFolders = new Set<string>([rootFolderId]);
+  const queue: Array<{ folderId: string; prefix: string }> = [{ folderId: rootFolderId, prefix: "" }];
+
+  while (queue.length > 0) {
+    const { folderId, prefix } = queue.shift()!;
+    for (const child of await listChildren(folderId)) {
+      if (child.mimeType === FOLDER_MIME_TYPE) {
+        if (visitedFolders.has(child.id)) continue;
+        visitedFolders.add(child.id);
+        queue.push({ folderId: child.id, prefix: `${prefix}${child.name}/` });
+        continue;
+      }
+      if (seenFileIds.has(child.id)) continue;
+      seenFileIds.add(child.id);
+      files.push({ ...child, path: `${prefix}${child.name}` });
+    }
+  }
+
+  return files;
 }
 
 export interface DriveClient {
   verifyFolderAccess(folderId: string): Promise<FolderAccessResult>;
   /**
-   * Direct children of the folder only (no recursion into subfolders — the
-   * connected-folder model is single-level), excluding trashed items and
-   * subfolders themselves (only actual files are sync candidates).
+   * Every file in the folder *and all of its subfolders*, flattened into one
+   * list (see `walkFolderTree`). Trashed items are excluded; folders
+   * themselves are traversed, never returned (only actual files are sync
+   * candidates).
    */
   listFiles(folderId: string): Promise<DriveFileMeta[]>;
   /** Google-native files (Docs/Sheets/Slides) only — export as another format. */
@@ -123,35 +171,39 @@ export function createGoogleDriveClient(options: GoogleDriveClientOptions = {}):
     },
 
     async listFiles(folderId: string): Promise<DriveFileMeta[]> {
-      const files: DriveFileMeta[] = [];
-      let pageToken: string | undefined;
+      return walkFolderTree(folderId, async (parentId) => {
+        const children: DriveChildEntry[] = [];
+        let pageToken: string | undefined;
 
-      do {
-        const res = await retrying(() =>
-          drive.files.list({
-            q: `'${folderId}' in parents and trashed = false and mimeType != '${FOLDER_MIME_TYPE}'`,
-            fields: "nextPageToken, files(id, name, mimeType, modifiedTime)",
-            pageSize: 1000,
-            pageToken,
-            supportsAllDrives: true,
-            includeItemsFromAllDrives: true,
-          }),
-        );
+        do {
+          const res = await retrying(() =>
+            drive.files.list({
+              // Folders are included here (unlike the old single-level
+              // listing) so walkFolderTree can descend into them.
+              q: `'${parentId}' in parents and trashed = false`,
+              fields: "nextPageToken, files(id, name, mimeType, modifiedTime)",
+              pageSize: 1000,
+              pageToken,
+              supportsAllDrives: true,
+              includeItemsFromAllDrives: true,
+            }),
+          );
 
-        for (const file of res.data.files ?? []) {
-          if (!file.id || !file.name || !file.mimeType || !file.modifiedTime) continue;
-          files.push({
-            id: file.id,
-            name: file.name,
-            mimeType: file.mimeType,
-            modifiedTime: file.modifiedTime,
-          });
-        }
+          for (const file of res.data.files ?? []) {
+            if (!file.id || !file.name || !file.mimeType || !file.modifiedTime) continue;
+            children.push({
+              id: file.id,
+              name: file.name,
+              mimeType: file.mimeType,
+              modifiedTime: file.modifiedTime,
+            });
+          }
 
-        pageToken = res.data.nextPageToken ?? undefined;
-      } while (pageToken);
+          pageToken = res.data.nextPageToken ?? undefined;
+        } while (pageToken);
 
-      return files;
+        return children;
+      });
     },
 
     async exportAsText(fileId: string, exportMimeType: string): Promise<string> {

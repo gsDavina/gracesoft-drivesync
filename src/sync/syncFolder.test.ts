@@ -167,6 +167,62 @@ describe("createFolderSyncer", () => {
     expect(stored[0]?.chunkCount).toBe(vectorStore.upserted[0]?.records.length);
   });
 
+  it("writes files from subfolders as flat vectors, carrying the subfolder path in metadata", async () => {
+    const driveClient = makeFakeDriveClient([
+      file({ id: "top", name: "top.txt", path: "top.txt" }),
+      file({ id: "nested", name: "deep.txt", path: "Reports/2026/deep.txt" }),
+    ]);
+    const vectorStore = makeFakeVectorStore();
+    const textExtractor = makeFakeTextExtractor({
+      top: { ok: true, text: "alpha beta" },
+      nested: { ok: true, text: "gamma delta" },
+    });
+
+    const syncer = createFolderSyncer({
+      driveClient,
+      fileRepository: makeFakeFileRepository([]),
+      textExtractor,
+      tokenizer,
+      embeddingProvider: makeFakeEmbeddingProvider(),
+      vectorStore,
+      chunkOptions,
+    });
+
+    const summary = await syncer.syncFolder(ACCOUNT_ID, DRIVE_FOLDER);
+
+    expect(summary.added).toBe(2);
+    const records = vectorStore.upserted.flatMap((u) => u.records);
+    // Same namespace, same `{fileId}-{chunkIndex}` IDs regardless of depth.
+    expect(vectorStore.upserted.every((u) => u.namespace === ACCOUNT_ID)).toBe(true);
+    expect(records.map((r) => r.id)).toEqual(["top-0", "nested-0"]);
+    expect(records.map((r) => r.metadata?.path)).toEqual(["top.txt", "Reports/2026/deep.txt"]);
+  });
+
+  it("deletes vectors for a file that left the folder tree (e.g. its subfolder was removed)", async () => {
+    const driveClient = makeFakeDriveClient([file({ id: "top", path: "top.txt" })]);
+    const fileRepository = makeFakeFileRepository([
+      fileRecord({ id: "row_1", fileId: "top", contentHash: computeContentHash("kept"), chunkCount: 1 }),
+      fileRecord({ id: "row_2", fileId: "was-nested", chunkCount: 2 }),
+    ]);
+    const vectorStore = makeFakeVectorStore();
+
+    const syncer = createFolderSyncer({
+      driveClient,
+      fileRepository,
+      textExtractor: makeFakeTextExtractor({}),
+      tokenizer,
+      embeddingProvider: makeFakeEmbeddingProvider(),
+      vectorStore,
+      chunkOptions,
+    });
+
+    const summary = await syncer.syncFolder(ACCOUNT_ID, DRIVE_FOLDER);
+
+    expect(summary.deleted).toBe(1);
+    expect(vectorStore.deleted).toEqual([{ namespace: ACCOUNT_ID, ids: ["was-nested-0", "was-nested-1"] }]);
+    expect((await fileRepository.listForFolder(DRIVE_FOLDER.id)).map((r) => r.fileId)).toEqual(["top"]);
+  });
+
   it("skips re-embedding when the content hash is unchanged, but still updates modifiedTime", async () => {
     const unchangedText = "same content every time";
     const contentHash = computeContentHash(unchangedText);

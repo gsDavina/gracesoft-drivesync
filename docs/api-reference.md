@@ -57,11 +57,13 @@ Retrieval: embeds the query, searches the caller's own account namespace, return
 ```
 `topK` is optional (default `5`, max `50`).
 
+`filePath` is the file's location within the connected folder (subfolders included). It's omitted for chunks synced before subfolder support; those gain it the next time the file changes and is re-embedded.
+
 **Response**
 ```json
 {
   "results": [
-    { "text": "...", "score": 0.87, "fileId": "...", "fileName": "pricing.docx", "section": "Enterprise tier" }
+    { "text": "...", "score": 0.87, "fileId": "...", "fileName": "pricing.docx", "filePath": "Sales/pricing.docx", "section": "Enterprise tier" }
   ]
 }
 ```

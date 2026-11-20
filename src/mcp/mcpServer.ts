@@ -26,7 +26,7 @@ export function createDriveSyncMcpServer(deps: {
     {
       title: "Search connected Drive folders",
       description:
-        "Search the caller's connected Google Drive folders for relevant chunks. Returns chunk text and source attribution (fileId, fileName, section, score).",
+        "Search the caller's connected Google Drive folders for relevant chunks. Returns chunk text and source attribution (fileId, fileName, filePath, section, score).",
       inputSchema: {
         query: z.string().min(1).describe("Natural-language search query"),
         topK: z.number().int().positive().max(MAX_TOP_K).optional().describe(`Number of results to return (default ${DEFAULT_TOP_K}, max ${MAX_TOP_K})`),

@@ -6,6 +6,8 @@ export interface RetrievedChunk {
   score: number;
   fileId: string;
   fileName: string;
+  /** Location within the connected folder, e.g. `"Reports/2026/b.pdf"`. */
+  filePath?: string;
   section?: string;
 }
 
@@ -41,6 +43,7 @@ export function createRetrievalService(deps: {
         score: match.score,
         fileId: stringField(match.metadata, "fileId") ?? "",
         fileName: stringField(match.metadata, "name") ?? "",
+        filePath: stringField(match.metadata, "path"),
         section: stringField(match.metadata, "section"),
       }));
     },

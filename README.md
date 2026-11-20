@@ -21,7 +21,7 @@ Syncs Google Drive folders into a vector store for retrieval-augmented generatio
 
 ## Features
 
-- **Drive folder sync** — paste a folder ID, we verify a shared service account can see it, then keep it in sync on a schedule (BullMQ + Redis).
+- **Drive folder sync** — paste a folder ID, we verify a shared service account can see it, then keep it in sync on a schedule (BullMQ + Redis). Subfolders are included: every file anywhere under the connected folder is synced into the same flat index, tagged with its path (e.g. `Reports/2026/q3.pdf`).
 - **Extraction** — Google Docs, Sheets, Slides, and PDFs (with a text layer) to plain text.
 - **Chunking** — token-budgeted chunks with overlap, using the same tokenizer (`tiktoken`'s `cl100k_base`) the reference embedding provider uses.
 - **Pluggable providers** — `EmbeddingProvider` and `VectorStore` are interfaces, not hardcoded SDK calls. OpenAI and Pinecone ship as the reference adapters; see [Adding a provider](docs/adding-a-provider.md) to add your own.

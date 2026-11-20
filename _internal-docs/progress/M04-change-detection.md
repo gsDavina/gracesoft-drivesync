@@ -22,3 +22,13 @@ Status: **Done**
 ## Next
 
 M5 — Extraction pipeline: Docs/Sheets/PDFs/Slides → plain text.
+
+## Update (2026-11-20): recursive subfolder sync
+
+The "direct children only" decision above is superseded. `listFiles` now walks the whole folder tree via `walkFolderTree` (`src/drive/driveClient.ts`) and returns one flat list of every file under the connected folder. No data-model change was needed: `DriveFolder` still holds one root `folderId`, and `DriveFile`/vectors stay keyed by `fileId`, so the vector store stays flat.
+
+- **Each folder is visited once, and each file is listed once.** Drive allows multiple parents, so a set of visited folder IDs stops loops and duplicate traversal. Duplicate file IDs are dropped, and the first path found wins.
+- **Shortcuts are not followed.** They aren't folder mimeType, so they're treated as (unsupported) files, as before.
+- **Path is metadata only.** Each vector now carries `path` (e.g. `Reports/2026/q3.pdf`), and `POST /query` / MCP `search` return it as `filePath`. It isn't stored in Postgres, so moving a file between subfolders without editing it (same `modifiedTime`) leaves the old `path` on its vectors until its content next changes.
+- **Deletes still work.** A file that leaves the tree (moved out, or its subfolder deleted/trashed) drops out of the listing, so `detectChanges` reports it as deleted and its vectors are cleaned up.
+- **Cost:** one extra `files.list` call (or more, if paginated) per subfolder per sync run, each going through the same `withRetry`.

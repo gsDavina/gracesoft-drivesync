@@ -633,6 +633,7 @@
         <p>Paste a Drive folder ID, share it with a service account, and DriveSync keeps it in sync on a schedule: listing what changed, extracting text, chunking it, embedding it, and writing it into a vector store — ready to query over REST or hand to any MCP-compatible client.</p>
         <ul>
           <li><strong>Drive folder sync</strong> — folder access is verified before it's ever marked connected; a folder that's later unshared surfaces as <code>NOT_ACCESSIBLE</code>, not a silent stale success.</li>
+          <li><strong>Subfolders included</strong> — every file anywhere under the connected folder is synced into the same flat index, tagged with its path within the folder (e.g. <code>Reports/2026/q3.pdf</code>).</li>
           <li><strong>Extraction</strong> — Google Docs, Sheets, Slides, and PDFs with a text layer, to plain text.</li>
           <li><strong>Chunking</strong> — token-budgeted chunks with overlap, using the same tokenizer the reference embedding provider uses, so measured chunk sizes are the sizes that provider actually sees.</li>
           <li><strong>Pluggable providers</strong> — embeddings and vector storage are interfaces, not hardcoded SDK calls. OpenAI and Pinecone ship as the reference adapters.</li>
@@ -856,7 +857,7 @@ npm run mcp      # MCP server on MCP_SERVER_PORT (default 3001)</code></pre>
 // Response
 {
   "results": [
-    { "text": "...", "score": 0.87, "fileId": "...", "fileName": "pricing.docx", "section": "Enterprise tier" }
+    { "text": "...", "score": 0.87, "fileId": "...", "fileName": "pricing.docx", "filePath": "Sales/pricing.docx", "section": "Enterprise tier" }
   ]
 }</code></pre>
 

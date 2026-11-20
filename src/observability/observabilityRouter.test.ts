@@ -26,6 +26,8 @@ describe("GET /status", () => {
           lastSyncError: null,
           consecutiveFailures: 0,
           fileCount: 0,
+          skippedCount: 0,
+          skippedByReason: {},
         },
       ]),
       getAudit: vi.fn(),
@@ -54,14 +56,14 @@ describe("GET /audit", () => {
   it("returns 200 with the caller's index totals", async () => {
     const observabilityService: ObservabilityService = {
       getStatus: vi.fn(),
-      getAudit: vi.fn(async () => ({ totalFiles: 5, totalChunks: 42, folders: [] })),
+      getAudit: vi.fn(async () => ({ totalFiles: 5, totalChunks: 42, totalSkipped: 0, skippedByReason: {}, folders: [] })),
     };
 
     const app = createApp(makeApiKeyRepository(), undefined, undefined, observabilityService);
     const res = await request(app).get("/audit").set("Authorization", AUTHORIZED_HEADER);
 
     expect(res.status).toBe(200);
-    expect(res.body).toEqual({ totalFiles: 5, totalChunks: 42, folders: [] });
+    expect(res.body).toEqual({ totalFiles: 5, totalChunks: 42, totalSkipped: 0, skippedByReason: {}, folders: [] });
     expect(observabilityService.getAudit).toHaveBeenCalledWith("acct_1");
   });
 

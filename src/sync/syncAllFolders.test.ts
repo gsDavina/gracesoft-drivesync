@@ -63,7 +63,7 @@ function makeFolderRepository(folders: FolderRecord[]): FolderRepository & { rec
   };
 }
 
-const emptySummary: FolderSyncSummary = { added: 0, updated: 0, deleted: 0, skippedUnchanged: 0, failedFiles: [] };
+const emptySummary: FolderSyncSummary = { added: 0, updated: 0, deleted: 0, skippedUnchanged: 0, failedFiles: [], skippedFiles: [] };
 
 describe("createSyncRunner", () => {
   it("syncs every connected folder and reports a summary per folder", async () => {

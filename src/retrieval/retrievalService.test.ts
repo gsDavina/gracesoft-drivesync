@@ -42,6 +42,27 @@ describe("createRetrievalService", () => {
     expect(result?.filePath).toBe("Reports/deep.txt");
   });
 
+  it("returns the source file's mimeType when the chunk has one (M28)", async () => {
+    const vectorStore = makeVectorStore([
+      { id: "f-0", score: 0.8, metadata: { text: "t", fileId: "f", name: "a.pdf", mimeType: "application/pdf" } },
+    ]);
+    const service = createRetrievalService({ embeddingProvider: makeEmbeddingProvider(), vectorStore });
+
+    const [result] = await service.query("acct_1", "q", 1);
+
+    expect(result?.mimeType).toBe("application/pdf");
+  });
+
+  it("still returns pre-v2.1 chunks (no mimeType in metadata) without error (M28)", async () => {
+    const vectorStore = makeVectorStore([{ id: "f-0", score: 0.8, metadata: { text: "t", fileId: "f", name: "old.txt" } }]);
+    const service = createRetrievalService({ embeddingProvider: makeEmbeddingProvider(), vectorStore });
+
+    const [result] = await service.query("acct_1", "q", 1);
+
+    expect(result).toMatchObject({ text: "t", fileName: "old.txt" });
+    expect(result?.mimeType).toBeUndefined();
+  });
+
   it("queries only the caller's own namespace (accountId)", async () => {
     const vectorStore = makeVectorStore([]);
     const service = createRetrievalService({ embeddingProvider: makeEmbeddingProvider([1, 2, 3]), vectorStore });

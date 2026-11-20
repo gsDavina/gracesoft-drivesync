@@ -56,18 +56,22 @@ const worker = new Worker(
     logger.info("sync run started");
     const summary = await syncRunner.runSync();
     const failed = summary.folders.filter((f) => !f.ok);
-    // A folder can succeed overall while still skipping individual files
-    // (unsupported type, scanned PDF, a transient error survived retries) —
-    // those failures live in each successful outcome's summary.failedFiles
-    // and are otherwise invisible in the logs.
+    // A folder can succeed overall while individual files still fail
+    // transiently (a timeout, an error that survived retries). Those live in
+    // each successful outcome's summary.failedFiles. Permanently
+    // unextractable files (unsupported type, scanned PDF, too large, …) are
+    // recorded as SKIPPED instead (M27), logged once per file by syncFolder,
+    // and only counted here.
     const filesFailedWithinSuccessfulFolders = summary.folders.flatMap((f) =>
       f.ok ? f.summary.failedFiles.map((file) => ({ accountId: f.accountId, driveFolderId: f.driveFolderId, ...file })) : [],
     );
+    const newlySkippedFileCount = summary.folders.reduce((n, f) => n + (f.ok ? f.summary.skippedFiles.length : 0), 0);
     logger.info(
       {
         folderCount: summary.folders.length,
         failedFolderCount: failed.length,
         failedFileCount: filesFailedWithinSuccessfulFolders.length,
+        newlySkippedFileCount,
       },
       "sync run completed",
     );

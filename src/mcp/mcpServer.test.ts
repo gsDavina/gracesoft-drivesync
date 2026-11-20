@@ -59,14 +59,14 @@ describe("createDriveSyncMcpServer", () => {
   });
 
   it("fetch_document returns the reconstructed document as text", async () => {
-    const documentService = makeDocumentService({ fileId: "file-1", fileName: "doc.txt", text: "full document text" });
+    const documentService = makeDocumentService({ fileId: "file-1", fileName: "doc.txt", mimeType: "application/pdf", text: "full document text" });
     const client = await connectedClient({ retrievalService: makeRetrievalService([]), documentService, accountId: "acct_7" });
 
     const result = await client.callTool({ name: "fetch_document", arguments: { fileId: "file-1" } });
 
     expect(documentService.fetchDocument).toHaveBeenCalledWith("acct_7", "file-1");
     const content = result.content as Array<{ type: string; text: string }>;
-    expect(JSON.parse(content[0]!.text)).toEqual({ fileId: "file-1", fileName: "doc.txt", text: "full document text" });
+    expect(JSON.parse(content[0]!.text)).toEqual({ fileId: "file-1", fileName: "doc.txt", mimeType: "application/pdf", text: "full document text" });
   });
 
   it("fetch_document reports isError for a document that isn't found or isn't the caller's", async () => {

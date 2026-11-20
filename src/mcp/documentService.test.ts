@@ -15,6 +15,9 @@ function fileRecord(overrides: Partial<FileRecord> = {}): FileRecord {
     contentHash: "hash",
     chunkCount: 3,
     lastSyncedAt: new Date(),
+    status: "SYNCED",
+    skipReason: null,
+    skipCapabilityVersion: null,
     ...overrides,
   };
 }
@@ -23,6 +26,7 @@ function makeFileRepository(file: FileRecord | null): FileRepository {
   return {
     listForFolder: vi.fn(),
     upsertSynced: vi.fn(),
+    upsertSkipped: vi.fn(),
     deleteByFileIds: vi.fn(),
     findByFileId: vi.fn(async () => file),
     listForAccount: vi.fn(),
@@ -51,7 +55,12 @@ describe("createDocumentService", () => {
 
     const result = await service.fetchDocument("acct_1", "file-1");
 
-    expect(result).toEqual({ fileId: "file-1", fileName: "doc.txt", text: "first\n\nsecond\n\nthird" });
+    expect(result).toEqual({
+      fileId: "file-1",
+      fileName: "doc.txt",
+      mimeType: "application/vnd.google-apps.document",
+      text: "first\n\nsecond\n\nthird",
+    });
     expect(vectorStore.fetch).toHaveBeenCalledWith("acct_1", ["file-1-0", "file-1-1", "file-1-2"]);
   });
 

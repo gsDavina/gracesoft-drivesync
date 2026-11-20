@@ -5,6 +5,8 @@ import type { VectorStore } from "../vectorstore/vectorStore.js";
 export interface DocumentResult {
   fileId: string;
   fileName: string;
+  /** v2.1 (M28). Read from the tracking row, so it's present even for files indexed before v2.1. */
+  mimeType: string;
   text: string;
 }
 
@@ -38,7 +40,7 @@ export function createDocumentService(deps: { fileRepository: FileRepository; ve
         })
         .join("\n\n");
 
-      return { fileId: file.fileId, fileName: file.name, text };
+      return { fileId: file.fileId, fileName: file.name, mimeType: file.mimeType, text };
     },
   };
 }

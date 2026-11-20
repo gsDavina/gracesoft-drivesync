@@ -33,6 +33,9 @@ function fileRecord(overrides: Partial<FileRecord> = {}): FileRecord {
     contentHash: null,
     chunkCount: 0,
     lastSyncedAt: new Date(),
+    status: "SYNCED",
+    skipReason: null,
+    skipCapabilityVersion: null,
     ...overrides,
   };
 }
@@ -69,6 +72,23 @@ function makeFakeFileRepository(seed: FileRecord[] = []): FileRepository {
     async upsertSynced(params) {
       const key = `${params.driveFolderId}:${params.fileId}`;
       const record: FileRecord = { ...fileRecord(), ...params, id: rows.get(key)?.id ?? `row_${rows.size + 1}`, lastSyncedAt: new Date() };
+      rows.set(key, record);
+      return record;
+    },
+    async upsertSkipped(params) {
+      const key = `${params.driveFolderId}:${params.fileId}`;
+      const { reason, capabilityVersion, ...rest } = params;
+      const record: FileRecord = {
+        ...fileRecord(),
+        ...rest,
+        id: rows.get(key)?.id ?? `row_${rows.size + 1}`,
+        contentHash: null,
+        chunkCount: 0,
+        status: "SKIPPED",
+        skipReason: reason,
+        skipCapabilityVersion: capabilityVersion,
+        lastSyncedAt: new Date(),
+      };
       rows.set(key, record);
       return record;
     },
@@ -125,10 +145,18 @@ function makeFakeDriveClient(files: DriveFileMeta[]): DriveClient {
   };
 }
 
-function makeFakeTextExtractor(resultsByFileId: Record<string, ExtractionResult>): TextExtractor {
+function makeFakeTextExtractor(
+  resultsByFileId: Record<string, ExtractionResult>,
+  capabilityVersion = "test-v1",
+): TextExtractor & { calls: string[] } {
+  const calls: string[] = [];
   return {
-    extractText: async (file) => resultsByFileId[file.id] ?? { ok: false, reason: "unsupported-mime-type" },
-    capabilityVersion: "test-v1",
+    calls,
+    extractText: async (file) => {
+      calls.push(file.id);
+      return resultsByFileId[file.id] ?? { ok: false, reason: "unsupported-mime-type" };
+    },
+    capabilityVersion,
   };
 }
 
@@ -158,7 +186,7 @@ describe("createFolderSyncer", () => {
 
     const summary = await syncer.syncFolder(ACCOUNT_ID, DRIVE_FOLDER);
 
-    expect(summary).toEqual({ added: 1, updated: 0, deleted: 0, skippedUnchanged: 0, failedFiles: [] });
+    expect(summary).toEqual({ added: 1, updated: 0, deleted: 0, skippedUnchanged: 0, failedFiles: [], skippedFiles: [] });
     expect(vectorStore.upserted).toHaveLength(1);
     expect(vectorStore.upserted[0]?.namespace).toBe(ACCOUNT_ID);
     expect(vectorStore.upserted[0]?.records.map((r) => r.id)).toEqual(
@@ -248,7 +276,7 @@ describe("createFolderSyncer", () => {
 
     const summary = await syncer.syncFolder(ACCOUNT_ID, DRIVE_FOLDER);
 
-    expect(summary).toEqual({ added: 0, updated: 0, deleted: 0, skippedUnchanged: 1, failedFiles: [] });
+    expect(summary).toEqual({ added: 0, updated: 0, deleted: 0, skippedUnchanged: 1, failedFiles: [], skippedFiles: [] });
     expect(vectorStore.upserted).toEqual([]);
 
     const stored = await fileRepository.listForFolder(DRIVE_FOLDER.id);
@@ -305,7 +333,7 @@ describe("createFolderSyncer", () => {
 
     const summary = await syncer.syncFolder(ACCOUNT_ID, DRIVE_FOLDER);
 
-    expect(summary).toEqual({ added: 0, updated: 0, deleted: 1, skippedUnchanged: 0, failedFiles: [] });
+    expect(summary).toEqual({ added: 0, updated: 0, deleted: 1, skippedUnchanged: 0, failedFiles: [], skippedFiles: [] });
     expect(vectorStore.deleted).toEqual([{ namespace: ACCOUNT_ID, ids: ["file-1-0", "file-1-1", "file-1-2"] }]);
     expect(await fileRepository.listForFolder(DRIVE_FOLDER.id)).toEqual([]);
   });
@@ -332,7 +360,9 @@ describe("createFolderSyncer", () => {
     const summary = await syncer.syncFolder(ACCOUNT_ID, DRIVE_FOLDER);
 
     expect(summary.added).toBe(1);
-    expect(summary.failedFiles).toEqual([{ fileId: "file-1", reason: "scanned-pdf-ocr-not-implemented" }]);
+    // v2.1 (M27): a permanent reason is a skip, not a failure.
+    expect(summary.skippedFiles).toEqual([{ fileId: "file-1", reason: "scanned-pdf-ocr-not-implemented" }]);
+    expect(summary.failedFiles).toEqual([]);
   });
 
   it("records an unexpected error without throwing, and continues syncing other files", async () => {
@@ -367,5 +397,138 @@ describe("createFolderSyncer", () => {
     expect(summary.added).toBe(0);
     expect(summary.failedFiles).toHaveLength(2);
     expect(summary.failedFiles.every((f) => f.reason === "vector store is down")).toBe(true);
+  });
+});
+
+describe("skipped-file state (M27) and mimeType metadata (M28)", () => {
+  const chunkOptions = { maxTokens: 3, overlapTokens: 1 };
+
+  function syncerWith(
+    files: DriveFileMeta[],
+    fileRepository: FileRepository,
+    textExtractor: TextExtractor,
+    vectorStore = makeFakeVectorStore(),
+  ) {
+    return createFolderSyncer({
+      driveClient: makeFakeDriveClient(files),
+      fileRepository,
+      textExtractor,
+      tokenizer: makeWordTokenizer(),
+      embeddingProvider: makeFakeEmbeddingProvider(),
+      vectorStore,
+      chunkOptions,
+    });
+  }
+
+  it("records a permanent failure as SKIPPED with its modifiedTime and reason", async () => {
+    const fileRepository = makeFakeFileRepository([]);
+    const textExtractor = makeFakeTextExtractor({ "file-1": { ok: false, reason: "password-protected" } });
+
+    await syncerWith([file({ modifiedTime: "t1" })], fileRepository, textExtractor).syncFolder(ACCOUNT_ID, DRIVE_FOLDER);
+
+    const [row] = await fileRepository.listForFolder(DRIVE_FOLDER.id);
+    expect(row).toMatchObject({
+      status: "SKIPPED",
+      skipReason: "password-protected",
+      skipCapabilityVersion: "test-v1",
+      modifiedTime: "t1",
+      chunkCount: 0,
+    });
+  });
+
+  it("doesn't re-extract or re-report an unchanged SKIPPED file on the next run", async () => {
+    const fileRepository = makeFakeFileRepository([]);
+    const textExtractor = makeFakeTextExtractor({});
+    const files = [file({ mimeType: "video/mp4", modifiedTime: "t1" })];
+
+    const first = await syncerWith(files, fileRepository, textExtractor).syncFolder(ACCOUNT_ID, DRIVE_FOLDER);
+    const second = await syncerWith(files, fileRepository, textExtractor).syncFolder(ACCOUNT_ID, DRIVE_FOLDER);
+
+    expect(first.skippedFiles).toEqual([{ fileId: "file-1", reason: "unsupported-mime-type" }]);
+    expect(second).toEqual({ added: 0, updated: 0, deleted: 0, skippedUnchanged: 0, failedFiles: [], skippedFiles: [] });
+    expect(textExtractor.calls).toEqual(["file-1"]);
+  });
+
+  it("retries a SKIPPED file once its modifiedTime changes", async () => {
+    const fileRepository = makeFakeFileRepository([
+      fileRecord({ status: "SKIPPED", skipReason: "file-too-large", skipCapabilityVersion: "test-v1", modifiedTime: "t1" }),
+    ]);
+    const textExtractor = makeFakeTextExtractor({ "file-1": { ok: true, text: "one two" } });
+
+    const summary = await syncerWith([file({ modifiedTime: "t2" })], fileRepository, textExtractor).syncFolder(
+      ACCOUNT_ID,
+      DRIVE_FOLDER,
+    );
+
+    expect(summary.added).toBe(1); // nothing was indexed before, so it's an add
+    expect((await fileRepository.listForFolder(DRIVE_FOLDER.id))[0]).toMatchObject({ status: "SYNCED", skipReason: null });
+  });
+
+  it("re-evaluates an unchanged SKIPPED file after a deploy changes the extraction capability", async () => {
+    const fileRepository = makeFakeFileRepository([
+      fileRecord({ status: "SKIPPED", skipReason: "unsupported-mime-type", skipCapabilityVersion: "old-build", modifiedTime: "t1" }),
+    ]);
+    const textExtractor = makeFakeTextExtractor({ "file-1": { ok: true, text: "now supported" } }, "new-build");
+
+    const summary = await syncerWith([file({ modifiedTime: "t1" })], fileRepository, textExtractor).syncFolder(
+      ACCOUNT_ID,
+      DRIVE_FOLDER,
+    );
+
+    expect(textExtractor.calls).toEqual(["file-1"]);
+    expect(summary.added).toBe(1);
+  });
+
+  it("never marks a transient failure SKIPPED, and retries it every run", async () => {
+    const fileRepository = makeFakeFileRepository([]);
+    const textExtractor = makeFakeTextExtractor({ "file-1": { ok: false, reason: "extraction-timeout" } });
+    const files = [file({ modifiedTime: "t1" })];
+
+    const first = await syncerWith(files, fileRepository, textExtractor).syncFolder(ACCOUNT_ID, DRIVE_FOLDER);
+    await syncerWith(files, fileRepository, textExtractor).syncFolder(ACCOUNT_ID, DRIVE_FOLDER);
+
+    expect(first.failedFiles).toEqual([{ fileId: "file-1", reason: "extraction-timeout" }]);
+    expect(first.skippedFiles).toEqual([]);
+    expect(await fileRepository.listForFolder(DRIVE_FOLDER.id)).toEqual([]);
+    expect(textExtractor.calls).toEqual(["file-1", "file-1"]);
+  });
+
+  it("removes an indexed file's old vectors when an edit makes it unextractable", async () => {
+    const fileRepository = makeFakeFileRepository([fileRecord({ chunkCount: 2, contentHash: "h", modifiedTime: "t1" })]);
+    const vectorStore = makeFakeVectorStore();
+    const textExtractor = makeFakeTextExtractor({ "file-1": { ok: false, reason: "file-too-large" } });
+
+    await syncerWith([file({ modifiedTime: "t2" })], fileRepository, textExtractor, vectorStore).syncFolder(
+      ACCOUNT_ID,
+      DRIVE_FOLDER,
+    );
+
+    expect(vectorStore.deleted).toEqual([{ namespace: ACCOUNT_ID, ids: ["file-1-0", "file-1-1"] }]);
+    expect((await fileRepository.listForFolder(DRIVE_FOLDER.id))[0]).toMatchObject({ status: "SKIPPED", chunkCount: 0 });
+  });
+
+  it("deletes the tracking row of a SKIPPED file removed from Drive", async () => {
+    const fileRepository = makeFakeFileRepository([fileRecord({ status: "SKIPPED", skipReason: "corrupt-file" })]);
+
+    const summary = await syncerWith([], fileRepository, makeFakeTextExtractor({})).syncFolder(ACCOUNT_ID, DRIVE_FOLDER);
+
+    expect(summary.deleted).toBe(1);
+    expect(await fileRepository.listForFolder(DRIVE_FOLDER.id)).toEqual([]);
+  });
+
+  it("writes the file's mimeType into every upserted vector's metadata", async () => {
+    const vectorStore = makeFakeVectorStore();
+    const textExtractor = makeFakeTextExtractor({ "file-1": { ok: true, text: "one two three four five" } });
+
+    await syncerWith(
+      [file({ mimeType: "application/pdf" })],
+      makeFakeFileRepository([]),
+      textExtractor,
+      vectorStore,
+    ).syncFolder(ACCOUNT_ID, DRIVE_FOLDER);
+
+    const records = vectorStore.upserted.flatMap((u) => u.records);
+    expect(records.length).toBeGreaterThan(0);
+    expect(records.every((r) => r.metadata?.mimeType === "application/pdf")).toBe(true);
   });
 });

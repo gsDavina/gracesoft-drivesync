@@ -9,6 +9,11 @@ export interface RetrievedChunk {
   /** Location within the connected folder, e.g. `"Reports/2026/b.pdf"`. */
   filePath?: string;
   section?: string;
+  /**
+   * v2.1 (M28): the source file's MIME type. Absent for vectors written
+   * before v2.1 until that file is next re-embedded (or a resync is run).
+   */
+  mimeType?: string;
 }
 
 export interface RetrievalService {
@@ -45,6 +50,7 @@ export function createRetrievalService(deps: {
         fileName: stringField(match.metadata, "name") ?? "",
         filePath: stringField(match.metadata, "path"),
         section: stringField(match.metadata, "section"),
+        mimeType: stringField(match.metadata, "mimeType"),
       }));
     },
   };

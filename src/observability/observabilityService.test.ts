@@ -31,6 +31,9 @@ function fileRecord(overrides: Partial<FileRecord> = {}): FileRecord {
     contentHash: "hash",
     chunkCount: 3,
     lastSyncedAt: new Date(),
+    status: "SYNCED",
+    skipReason: null,
+    skipCapabilityVersion: null,
     ...overrides,
   };
 }
@@ -47,6 +50,7 @@ function makeRepos(folders: FolderRecord[], files: FileRecord[]) {
   const fileRepository: FileRepository = {
     listForFolder: vi.fn(),
     upsertSynced: vi.fn(),
+    upsertSkipped: vi.fn(),
     deleteByFileIds: vi.fn(),
     findByFileId: vi.fn(),
     listForAccount: vi.fn(async (accountId) => files.filter((f) => f.accountId === accountId)),
@@ -79,6 +83,8 @@ describe("createObservabilityService.getStatus", () => {
         lastSyncError: null,
         consecutiveFailures: 0,
         fileCount: 2,
+        skippedCount: 0,
+        skippedByReason: {},
       },
     ]);
   });
@@ -119,8 +125,8 @@ describe("createObservabilityService.getAudit", () => {
     expect(audit.totalFiles).toBe(3);
     expect(audit.totalChunks).toBe(10);
     expect(audit.folders).toEqual([
-      { driveFolderId: "folder_1", folderId: "drive-folder-1", fileCount: 2, chunkCount: 5 },
-      { driveFolderId: "folder_2", folderId: "drive-folder-2", fileCount: 1, chunkCount: 5 },
+      { driveFolderId: "folder_1", folderId: "drive-folder-1", fileCount: 2, chunkCount: 5, skippedCount: 0, skippedByReason: {} },
+      { driveFolderId: "folder_2", folderId: "drive-folder-2", fileCount: 1, chunkCount: 5, skippedCount: 0, skippedByReason: {} },
     ]);
   });
 
@@ -129,8 +135,52 @@ describe("createObservabilityService.getAudit", () => {
 
     const audit = await service.getAudit("acct_1");
 
-    expect(audit.folders).toEqual([{ driveFolderId: "folder_1", folderId: "drive-folder-1", fileCount: 0, chunkCount: 0 }]);
+    expect(audit.folders).toEqual([{ driveFolderId: "folder_1", folderId: "drive-folder-1", fileCount: 0, chunkCount: 0, skippedCount: 0, skippedByReason: {} }]);
     expect(audit.totalFiles).toBe(0);
     expect(audit.totalChunks).toBe(0);
+  });
+});
+
+describe("skipped files in /status and /audit (M27)", () => {
+  const skipped = (id: string, driveFolderId: string, reason: string) =>
+    fileRecord({ id, fileId: id, driveFolderId, status: "SKIPPED", skipReason: reason, chunkCount: 0, contentHash: null });
+
+  it("reports skipped counts grouped by reason per folder, without counting them as synced files", async () => {
+    const files = [
+      fileRecord({ driveFolderId: "folder_1" }),
+      skipped("s1", "folder_1", "unsupported-mime-type"),
+      skipped("s2", "folder_1", "unsupported-mime-type"),
+      skipped("s3", "folder_1", "password-protected"),
+    ];
+    const service = createObservabilityService(makeRepos([folderRecord()], files));
+
+    const [status] = await service.getStatus("acct_1");
+
+    expect(status).toMatchObject({
+      fileCount: 1,
+      skippedCount: 3,
+      skippedByReason: { "unsupported-mime-type": 2, "password-protected": 1 },
+    });
+  });
+
+  it("totals skipped files across folders in /audit", async () => {
+    const folders = [folderRecord({ id: "folder_1" }), folderRecord({ id: "folder_2", folderId: "drive-folder-2" })];
+    const files = [
+      fileRecord({ driveFolderId: "folder_1", chunkCount: 4 }),
+      skipped("s1", "folder_1", "file-too-large"),
+      skipped("s2", "folder_2", "file-too-large"),
+      skipped("s3", "folder_2", "corrupt-file"),
+    ];
+    const service = createObservabilityService(makeRepos(folders, files));
+
+    const audit = await service.getAudit("acct_1");
+
+    expect(audit).toMatchObject({
+      totalFiles: 1,
+      totalChunks: 4,
+      totalSkipped: 3,
+      skippedByReason: { "file-too-large": 2, "corrupt-file": 1 },
+    });
+    expect(audit.folders[1]).toMatchObject({ fileCount: 0, skippedCount: 2, skippedByReason: { "file-too-large": 1, "corrupt-file": 1 } });
   });
 });

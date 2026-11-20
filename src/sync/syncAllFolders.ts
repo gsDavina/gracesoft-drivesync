@@ -69,6 +69,7 @@ export function createSyncRunner(deps: SyncRunnerDeps): SyncRunner {
                     deleted: summary.deleted,
                     skippedUnchanged: summary.skippedUnchanged,
                     failedFileCount: summary.failedFiles.length,
+                    skippedFileCount: summary.skippedFiles.length,
                   },
                   "folder sync completed",
                 );

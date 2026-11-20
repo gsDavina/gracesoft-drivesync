@@ -42,6 +42,7 @@ Every variable and its purpose is documented in `.env.example`; this section onl
 | Vector store module | `VECTOR_STORE`, `PINECONE_API_KEY`, `PINECONE_INDEX_NAME` | See below. |
 | Scheduling | `SYNC_CRON`, `DRIVE_RATE_LIMIT_PER_ACCOUNT` | Only read by the worker process. |
 | MCP | `MCP_SERVER_PORT` | Only read by the MCP process. |
+| Extraction (2.1, optional) | `MAX_EXTRACT_BYTES`, `EXTRACT_TIMEOUT_MS`, `GOOGLE_DOCS_EXPORT_FORMAT` | Only read by the worker. Defaults: 25 MB, 30 s, `text`. See "Upgrading to 2.1" below before changing `GOOGLE_DOCS_EXPORT_FORMAT`. |
 
 All required vars are validated at process startup (`src/config/env.ts`) — a missing or malformed one fails immediately with a specific error naming the variable, for every one of the three processes. There is no way to half-start with a bad config.
 
@@ -151,6 +152,20 @@ curl https://<api-host>/status -H "Authorization: Bearer <key>"
 ```
 
 If any connected folders exist, watch `GET /status` after the next scheduled sync interval (`SYNC_CRON`) and confirm `lastSyncStatus` moves to `SUCCESS` — this is the single most direct way to confirm embeddings + vector store + Drive credentials are all correctly wired in the new environment, since a dimension mismatch, a bad API key, or a broken service account key will all surface here as `FAILED` with `lastSyncError` populated.
+
+## Upgrading to 2.1
+
+2.1 adds document types (Word, Excel, PowerPoint, OpenDocument, plain text family) and is additive: no required env vars, no vector ID changes, no response fields removed. Deploy it like any other release, with three things to expect:
+
+1. **Migration.** `20261121000000_add_drive_file_skip_status` adds `status`, `skipReason` and `skipCapabilityVersion` to `drive_files`. Existing rows default to `SYNCED`. Run `prisma:deploy` before the new worker starts, as usual.
+2. **One-time re-embed of every Google Sheet (always).** Sheets now export as xlsx and every tab is indexed, instead of the first tab as CSV, so every Sheet's content hash changes and the first sync after deploy re-embeds all of them. Files in newly-supported formats are also embedded for the first time on that run.
+3. **One-time re-embed of every Google Doc (only if you turn on `GOOGLE_DOCS_EXPORT_FORMAT=markdown`).** The default `text` leaves Docs untouched.
+
+**Cost guidance.** Re-embedding cost is total tokens × the embedding model's price. With `text-embedding-3-small` at $0.02 per million tokens (check OpenAI's current pricing), 1,000 Sheets averaging 20,000 tokens each is 20M tokens, about $0.40; the same 1,000 Docs at 5,000 tokens each is about $0.10. `GET /audit`'s `totalChunks` before the upgrade × ~400 tokens per chunk is a quick upper-bound estimate for the whole index. The first post-upgrade sync also takes longer than usual; it runs on the normal schedule, nothing needs triggering by hand.
+
+**Vectors written before 2.1 don't carry `mimeType`** in their metadata. They gain it when the file is next re-embedded; results without it are returned normally.
+
+**Rolling back to 2.0** is safe without reverting the migration: 2.0 ignores the new columns. Files 2.1 recorded as skipped keep their tracking row, so 2.0 won't retry them until they change in Drive.
 
 ## Rollback
 

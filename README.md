@@ -17,12 +17,12 @@ Syncs Google Drive folders into a vector store for retrieval-augmented generatio
 | **Pluggable modules attached** | Embeddings: **OpenAI** · Vector store: **Pinecone** (swap either — see [Adding a provider](docs/adding-a-provider.md)) |
 | **Multi-tenant** | Per-account API keys; per-account vector namespace, never shared |
 | **Processes** | `server` (REST), `worker` (scheduled sync), `mcp` (MCP tools) — one image, three start commands |
-| **Build status** | 17/18 milestones complete — hosting on **Railway** ([deploy runbook](docs/deployment-runbook.md)); actual project not yet provisioned ([M18](_internal-docs/01-milestone-checklist.md)) |
+| **Build status** | v2: 17/18 milestones complete — hosting on **Railway** ([deploy runbook](docs/deployment-runbook.md)); actual project not yet provisioned ([M18](_internal-docs/01-milestone-checklist.md)). v2.1 (document types): code complete, release pending ([checklist](_internal-docs/06-v2.1-milestone-checklist.md), [CHANGELOG](CHANGELOG.md)) |
 
 ## Features
 
 - **Drive folder sync** — paste a folder ID, we verify a shared service account can see it, then keep it in sync on a schedule (BullMQ + Redis). Subfolders are included: every file anywhere under the connected folder is synced into the same flat index, tagged with its path (e.g. `Reports/2026/q3.pdf`).
-- **Extraction** — Google Docs, Sheets, Slides, and PDFs (with a text layer) to plain text.
+- **Extraction** — Google Docs, Sheets (every tab) and Slides; PDFs with a text layer; Word, Excel, PowerPoint and OpenDocument files; plain text, Markdown, CSV/TSV, JSON and HTML. See [Supported file types](#supported-file-types). Real document headings become chunk sections wherever the format has them.
 - **Chunking** — token-budgeted chunks with overlap, using the same tokenizer (`tiktoken`'s `cl100k_base`) the reference embedding provider uses.
 - **Pluggable providers** — `EmbeddingProvider` and `VectorStore` are interfaces, not hardcoded SDK calls. OpenAI and Pinecone ship as the reference adapters; see [Adding a provider](docs/adding-a-provider.md) to add your own.
 - **Dedup & cleanup** — content-hash skip on unchanged files, stale-vector cleanup when a file is deleted or shrinks to fewer chunks.
@@ -31,6 +31,31 @@ Syncs Google Drive folders into a vector store for retrieval-augmented generatio
 - **Observability** — `GET /status` (per-folder sync health) and `GET /audit` (index totals), both scoped to the caller's account.
 
 See [`_internal-docs/01-milestone-checklist.md`](_internal-docs/01-milestone-checklist.md) for the full build history and design decisions behind each piece.
+
+## Supported file types
+
+Every file anywhere under a connected folder is considered; these are the ones that get indexed. The table is checked against the extractor registry by a test (`src/extraction/supportedTypes.test.ts`), so it can't drift from what the code actually handles.
+
+| Format | MIME type | How it's read |
+|---|---|---|
+| Google Docs | `application/vnd.google-apps.document` | Drive export as plain text, or as Markdown with `GOOGLE_DOCS_EXPORT_FORMAT=markdown` |
+| Google Sheets | `application/vnd.google-apps.spreadsheet` | Drive export as xlsx, then every visible sheet as its own `## <Sheet>` section |
+| Google Slides | `application/vnd.google-apps.presentation` | Drive export as plain text |
+| PDF | `application/pdf` | Text layer only (scanned PDFs are skipped until OCR lands) |
+| Word | `application/vnd.openxmlformats-officedocument.wordprocessingml.document` | `mammoth`; Word heading styles become Markdown headings |
+| Word 97–2003 | `application/msword` | `word-extractor`, plain text |
+| Excel | `application/vnd.openxmlformats-officedocument.spreadsheetml.sheet` | Every visible sheet; formula cells give their last computed value |
+| OpenDocument spreadsheet | `application/vnd.oasis.opendocument.spreadsheet` | Every visible sheet |
+| PowerPoint | `application/vnd.openxmlformats-officedocument.presentationml.presentation` | Slide text in slide order, slide titles, speaker notes |
+| OpenDocument presentation | `application/vnd.oasis.opendocument.presentation` | Same as PowerPoint |
+| OpenDocument text | `application/vnd.oasis.opendocument.text` | Body text, headings at their outline level |
+| Plain text | `text/plain` | UTF-8 |
+| Markdown | `text/markdown`, `text/x-markdown` | UTF-8 |
+| CSV / TSV | `text/csv`, `text/tab-separated-values` | UTF-8 |
+| JSON | `application/json` | UTF-8, pretty-printed |
+| HTML | `text/html` | Text only (scripts, styles, images and link targets dropped), headings as Markdown |
+
+Anything else (images, video, legacy `.xls`/`.ppt`, `.rtf`, …), files larger than `MAX_EXTRACT_BYTES` (25 MB by default), password-protected and corrupt files are recorded as **skipped** with a reason, visible in `GET /status` and `GET /audit`. A skipped file is retried when it changes in Drive, or automatically after an upgrade that adds support for its type.
 
 ## Architecture
 
@@ -113,6 +138,7 @@ CI (`.github/workflows/ci.yml`) runs all four against fresh Postgres/Redis servi
 
 - **[Full documentation](docs/index.html)** — everything below, consolidated into one browsable page (architecture diagram, REST/MCP reference, env var table, provider setup, deployment). Open it directly in a browser.
 - [Adding a provider](docs/adding-a-provider.md) — implement `EmbeddingProvider` or `VectorStore` for a different embedding API or vector database.
+- [Adding an extractor](docs/adding-an-extractor.md) — teach the sync pipeline to read a new file type.
 - [Architecture](docs/architecture.md) — the pipeline in more detail, and the design decisions behind the interface boundaries.
 - [API reference](docs/api-reference.md) — REST endpoints and MCP tools.
 - [Deployment runbook](docs/deployment-runbook.md) — process topology, required env vars, the OpenAI/Pinecone module setup (including the dimension-compatibility check to run before every deploy), migrations, and rollback.

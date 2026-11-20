@@ -120,6 +120,7 @@ function makeFakeDriveClient(files: DriveFileMeta[]): DriveClient {
     verifyFolderAccess: async () => ({ accessible: true }),
     listFiles: async () => files,
     exportAsText: async () => "",
+    exportFile: async () => Buffer.from(""),
     downloadFile: async () => Buffer.from(""),
   };
 }
@@ -127,6 +128,7 @@ function makeFakeDriveClient(files: DriveFileMeta[]): DriveClient {
 function makeFakeTextExtractor(resultsByFileId: Record<string, ExtractionResult>): TextExtractor {
   return {
     extractText: async (file) => resultsByFileId[file.id] ?? { ok: false, reason: "unsupported-mime-type" },
+    capabilityVersion: "test-v1",
   };
 }
 

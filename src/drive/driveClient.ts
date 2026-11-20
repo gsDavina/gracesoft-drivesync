@@ -14,6 +14,12 @@ export interface DriveFileMeta {
   /** ISO 8601, as returned by the Drive API. */
   modifiedTime: string;
   /**
+   * Size in bytes as reported by Drive. Absent for Google-native files
+   * (Docs/Sheets/Slides have no stored binary), which skip the
+   * `MAX_EXTRACT_BYTES` pre-download check.
+   */
+  size?: number;
+  /**
    * Slash-separated location relative to the connected folder, ending in the
    * file name (`"a.pdf"` at the top level, `"Reports/2026/b.pdf"` nested).
    * Informational only — vectors stay flat, keyed by `fileId`.
@@ -73,6 +79,12 @@ export interface DriveClient {
   listFiles(folderId: string): Promise<DriveFileMeta[]>;
   /** Google-native files (Docs/Sheets/Slides) only — export as another format. */
   exportAsText(fileId: string, exportMimeType: string): Promise<string>;
+  /**
+   * Google-native files only — export to a *binary* format (e.g. a Google
+   * Sheet as xlsx). `exportAsText` would mangle binary bytes by decoding
+   * them as text.
+   */
+  exportFile(fileId: string, exportMimeType: string): Promise<Buffer>;
   /** Raw file bytes (PDFs and other non-Google-native files). */
   downloadFile(fileId: string): Promise<Buffer>;
 }
@@ -181,7 +193,7 @@ export function createGoogleDriveClient(options: GoogleDriveClientOptions = {}):
               // Folders are included here (unlike the old single-level
               // listing) so walkFolderTree can descend into them.
               q: `'${parentId}' in parents and trashed = false`,
-              fields: "nextPageToken, files(id, name, mimeType, modifiedTime)",
+              fields: "nextPageToken, files(id, name, mimeType, modifiedTime, size)",
               pageSize: 1000,
               pageToken,
               supportsAllDrives: true,
@@ -191,11 +203,13 @@ export function createGoogleDriveClient(options: GoogleDriveClientOptions = {}):
 
           for (const file of res.data.files ?? []) {
             if (!file.id || !file.name || !file.mimeType || !file.modifiedTime) continue;
+            const size = file.size != null ? Number(file.size) : undefined;
             children.push({
               id: file.id,
               name: file.name,
               mimeType: file.mimeType,
               modifiedTime: file.modifiedTime,
+              ...(size !== undefined && Number.isFinite(size) ? { size } : {}),
             });
           }
 
@@ -211,6 +225,13 @@ export function createGoogleDriveClient(options: GoogleDriveClientOptions = {}):
         drive.files.export({ fileId, mimeType: exportMimeType }, { responseType: "text" }),
       );
       return res.data as unknown as string;
+    },
+
+    async exportFile(fileId: string, exportMimeType: string): Promise<Buffer> {
+      const res = await retrying(() =>
+        drive.files.export({ fileId, mimeType: exportMimeType }, { responseType: "arraybuffer" }),
+      );
+      return Buffer.from(res.data as unknown as ArrayBuffer);
     },
 
     async downloadFile(fileId: string): Promise<Buffer> {

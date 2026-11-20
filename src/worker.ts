@@ -29,7 +29,12 @@ const vectorStore = createVectorStore();
 const folderSyncer = createFolderSyncer({
   driveClient,
   fileRepository: createPrismaFileRepository(),
-  textExtractor: createTextExtractor({ driveClient, pdfParser: createPdfParser() }),
+  textExtractor: createTextExtractor({
+    driveClient,
+    pdfParser: createPdfParser(),
+    googleDocsExportFormat: env.GOOGLE_DOCS_EXPORT_FORMAT,
+    limits: { maxBytes: env.MAX_EXTRACT_BYTES, timeoutMs: env.EXTRACT_TIMEOUT_MS },
+  }),
   tokenizer: createTiktokenTokenizer(),
   embeddingProvider,
   vectorStore,

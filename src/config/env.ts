@@ -35,6 +35,15 @@ const envSchema = z.object({
   DRIVE_RATE_LIMIT_PER_ACCOUNT: z.coerce.number().int().positive().default(5),
 
   MCP_SERVER_PORT: z.coerce.number().int().positive().default(3001),
+
+  // v2.1 extraction guards (M21). Files whose Drive-reported size exceeds
+  // MAX_EXTRACT_BYTES are skipped before they're ever downloaded; a parse
+  // that runs longer than EXTRACT_TIMEOUT_MS fails as `extraction-timeout`.
+  MAX_EXTRACT_BYTES: z.coerce.number().int().positive().default(25 * 1024 * 1024),
+  EXTRACT_TIMEOUT_MS: z.coerce.number().int().positive().default(30_000),
+  // M26: `markdown` gives Google Docs real headings for chunking, but changes
+  // every Doc's content hash (a one-time full re-embed). Off by default.
+  GOOGLE_DOCS_EXPORT_FORMAT: z.enum(["text", "markdown"]).default("text"),
 });
 
 export type Env = z.infer<typeof envSchema>;

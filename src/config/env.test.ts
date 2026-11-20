@@ -25,6 +25,31 @@ describe("loadEnv", () => {
     expect(env.SYNC_CRON).toBe("*/15 * * * *");
     expect(env.MCP_SERVER_PORT).toBe(3001);
     expect(env.OPENAI_EMBEDDING_DIMENSIONS).toBeUndefined();
+    expect(env.MAX_EXTRACT_BYTES).toBe(25 * 1024 * 1024);
+    expect(env.EXTRACT_TIMEOUT_MS).toBe(30_000);
+    expect(env.GOOGLE_DOCS_EXPORT_FORMAT).toBe("text");
+  });
+
+  it("parses the v2.1 extraction vars when set", () => {
+    const env = loadEnv({
+      ...REQUIRED,
+      MAX_EXTRACT_BYTES: "1048576",
+      EXTRACT_TIMEOUT_MS: "5000",
+      GOOGLE_DOCS_EXPORT_FORMAT: "markdown",
+    });
+    expect(env.MAX_EXTRACT_BYTES).toBe(1048576);
+    expect(env.EXTRACT_TIMEOUT_MS).toBe(5000);
+    expect(env.GOOGLE_DOCS_EXPORT_FORMAT).toBe("markdown");
+  });
+
+  it.each([
+    ["MAX_EXTRACT_BYTES", "-1"],
+    ["MAX_EXTRACT_BYTES", "lots"],
+    ["EXTRACT_TIMEOUT_MS", "0"],
+    ["EXTRACT_TIMEOUT_MS", "soon"],
+    ["GOOGLE_DOCS_EXPORT_FORMAT", "html"],
+  ])("fails fast on an invalid %s (%s)", (key, value) => {
+    expect(() => loadEnv({ ...REQUIRED, [key]: value })).toThrow(new RegExp(key));
   });
 
   it("parses OPENAI_EMBEDDING_DIMENSIONS when set", () => {

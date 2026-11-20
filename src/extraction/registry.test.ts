@@ -13,6 +13,7 @@ function makeDriveClient(): DriveClient {
     verifyFolderAccess: vi.fn(),
     listFiles: vi.fn(),
     exportAsText: vi.fn(async () => ""),
+    exportFile: vi.fn(async () => Buffer.from("")),
     downloadFile: vi.fn(async () => Buffer.from("")),
   };
 }

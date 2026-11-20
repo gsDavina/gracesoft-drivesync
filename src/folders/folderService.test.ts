@@ -69,6 +69,7 @@ function makeDriveClient(result: FolderAccessResult): DriveClient {
     verifyFolderAccess: async () => result,
     listFiles: async () => [],
     exportAsText: async () => "",
+    exportFile: async () => Buffer.from(""),
     downloadFile: async () => Buffer.from(""),
   };
 }
@@ -125,6 +126,7 @@ describe("folderService.verifyFolder", () => {
         accessible ? { accessible: true } : { accessible: false, reason: "not-found-or-not-shared" },
       listFiles: async () => [],
       exportAsText: async () => "",
+      exportFile: async () => Buffer.from(""),
       downloadFile: async () => Buffer.from(""),
     };
     const service = createFolderService({ driveClient, repository });
